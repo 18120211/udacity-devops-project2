@@ -1,0 +1,195 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  This is my server infrastructure
+Parameters:
+  Namespace:
+    Description: Application namespace
+    Type: String
+    Default: udacity-test 
+  S3BucketName:
+    Type: String
+    Default: udacity-test-s3-bucket
+  KeyName:
+    Type: String
+    Default: udacity-test-keypair
+  ImageId:
+    Type: String
+    Default: ami-0e472ba40eb589f49
+  InstanceType:
+    Type: String
+    Default: t3.medium
+Resources:
+############ Create security group #############
+  LBSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Load balancer SG" # Required
+      GroupName: Load-balancer-sg 
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 8080
+        ToPort: 8080
+        CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${Namespace}-VPCID
+  WebServerSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Web server security group" # Required
+      GroupName: "Web-server-sg"
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 0
+        ToPort: 65535
+        CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 8080
+        ToPort: 8080
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${Namespace}-VPCID
+
+############ Create Instance Profile and IAM role, IAM policy ################
+  EC2InstancePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub ${Namespace}-ec2-s3-policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Action:
+          - s3:*
+          Resource:
+          - !Sub arn:aws:s3:::${S3BucketName}/*
+          - !Sub arn:aws:s3:::${S3BucketName}
+      Roles:
+      - !Ref EC2InstanceRole
+
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${Namespace}-ec2-s3-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      InstanceProfileName: !Sub ${Namespace}-ec2-s3-profile
+      Path: /
+      Roles: 
+       - !Ref EC2InstanceRole
+
+################### Create Web server LaunchConfiguration and Web server auto scaling group ##################
+  WebServerLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      AssociatePublicIpAddress: true
+      BlockDeviceMappings:
+      - DeviceName: /dev/sdk
+        Ebs:
+          VolumeSize: 10
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SecurityGroups:
+      - !Ref WebServerSecGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData: 
+        Fn::Base64: !Sub |
+          #!bin/bash
+          apt-get update -y
+          apt-get install apache2 -y
+          systemctl start apache2.service
+          cd /var/www/html
+          sudo rm index.html
+          sudo apt install awscli -y
+          sudo aws s3api get-object --bucket ${S3BucketName} --key project2/index.html index.html
+  WebServerGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: "Web server autoscaling group"
+      LaunchConfigurationName: !Ref WebServerLaunchConfig
+      MaxSize: 4
+      MinSize: 4
+      TargetGroupARNs:
+      - !Ref WebServerTargetGroup
+      VPCZoneIdentifier:
+      - Fn::ImportValue:
+          !Sub ${Namespace}-PRI-NETS
+
+################### Create WebServer LB ###################
+  WebServerLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      SecurityGroups:
+      - !Ref LBSecGroup
+      Subnets:
+      - Fn::ImportValue: !Sub "${Namespace}-PUB-SUB1"
+      - Fn::ImportValue: !Sub "${Namespace}-PUB-SUB2"
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: 
+          !Ref WebServerTargetGroup
+      LoadBalancerArn: 
+        !Ref WebServerLB 
+      Port: 80
+      Protocol: HTTP
+  
+################### Create target group #######################
+  WebServerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 8
+      HealthyThresholdCount: 2
+      HealthCheckPort: 80
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${Namespace}-VPCID
+
+
+Outputs:
+  LoadBalancerUrl:
+    Description: The URL of the ALB
+    Value: !GetAtt LoadBalancer.DNSName
+    Export: 
+      Name: LB-Url
