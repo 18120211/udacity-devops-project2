@@ -1,0 +1,18 @@
+[
+    {
+        "ParameterKey": "Namespace",
+        "ParameterValue": "udacity-test"
+    },
+    {
+        "ParameterKey": "S3BucketName",
+        "ParameterValue": "udacity-test-s3-bucket"
+    },
+    {
+        "ParameterKey": "ImageId",
+        "ParameterValue": "ami-0e472ba40eb589f49"
+    },
+    {
+        "ParameterKey": "InstanceType",
+        "ParameterValue": "t3.medium"
+    },
+]

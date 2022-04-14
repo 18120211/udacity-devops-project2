@@ -190,6 +190,6 @@ Resources:
 Outputs:
   LoadBalancerUrl:
     Description: The URL of the ALB
-    Value: !GetAtt LoadBalancer.DNSName
+    Value: !GetAtt WebServerLB.DNSName
     Export: 
       Name: LB-Url
